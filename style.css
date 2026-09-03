@@ -402,37 +402,22 @@ textarea {
 
 .star-btn.filled { color: var(--accent); }
 
-/* ---------- arredi (elenco dinamico) ---------- */
-.arredo-row {
-  display: grid;
-  grid-template-columns: 1fr auto auto auto;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--line);
+/* ---------- arredi: etichette di gruppo (stanza) ---------- */
+.group-label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--blue);
+  margin: 14px 0 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 
-.arredo-row .text-input { padding: 8px 10px; }
-
-.arredo-remove {
-  background: none;
-  border: none;
-  color: var(--danger);
-  font-size: 1.1rem;
-  cursor: pointer;
-  padding: 4px 6px;
-}
-
-.add-row-btn {
-  margin-top: 10px;
-  border: 1px dashed var(--ink-soft);
-  background: none;
-  border-radius: var(--radius-s);
-  padding: 10px;
-  width: 100%;
-  font-size: 0.88rem;
-  color: var(--ink-soft);
-  cursor: pointer;
+.group-label:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 4px;
 }
 
 /* ---------- pulsante flottante aggiungi ---------- */
@@ -536,5 +521,4 @@ textarea {
 
 @media (max-width: 380px) {
   .field-grid { grid-template-columns: 1fr; }
-  .arredo-row { grid-template-columns: 1fr; }
 }
