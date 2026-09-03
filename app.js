@@ -78,6 +78,14 @@ const SECTIONS = [
     ],
   },
   {
+    key: "trattativa", tag: "In trattativa", title: "Stato della trattativa",
+    fields: [
+      { key: "offertaFatta", label: "Offerta economica fatta al venditore", type: "number", unit: "€" },
+      { key: "rispostaVenditore", label: "Risposta del venditore", type: "chip", options: ["Accettata", "Rifiutata", "In attesa", "Controproposta"] },
+      { key: "controproposta", label: "Importo della controproposta", type: "number", unit: "€" },
+    ],
+  },
+  {
     key: "catastale", tag: "Catastale e legale", title: "Aspetti catastali e legali",
     fields: [
       { key: "planimetriaConforme", label: "Planimetria depositata conforme allo stato di fatto", type: "bool" },
@@ -92,6 +100,23 @@ const SECTIONS = [
       { key: "iseeSotto40k", label: "ISEE sotto 40.000 € confermato (Fondo Consap)", type: "bool" },
       { key: "nonProprietarioAltri", label: "Confermato: nessun'altra proprietà immobiliare", type: "bool" },
       { key: "budgetTotale", label: "Budget totale (anticipo + spese accessorie)", type: "number", unit: "€" },
+    ],
+  },
+  {
+    key: "finanziamento", tag: "Il mutuo", title: "Finanziamento scelto",
+    fields: [
+      { key: "bancaScelta", label: "Banca del preventivo scelto", type: "text" },
+      { key: "importoMutuo", label: "Importo del mutuo", type: "number", unit: "€" },
+      { key: "percentualeLTV", label: "Percentuale finanziata (LTV)", type: "number", unit: "%" },
+      { key: "anticipoVersato", label: "Anticipo versato", type: "number", unit: "€" },
+      { key: "durataAnni", label: "Durata del mutuo", type: "number", unit: "anni" },
+      { key: "tanOfferto", label: "TAN offerto", type: "number", unit: "%" },
+      { key: "taegOfferto", label: "TAEG offerto", type: "number", unit: "%" },
+      { key: "rataMensile", label: "Rata mensile risultante", type: "number", unit: "€" },
+      { key: "consapRichiesto", label: "Richiesto il Fondo Consap under 36", type: "bool" },
+      { key: "costoPerizia", label: "Costo perizia", type: "number", unit: "€" },
+      { key: "costoIstruttoria", label: "Costo istruttoria", type: "number", unit: "€" },
+      { key: "impostaSostitutiva", label: "Imposta sostitutiva sul mutuo", type: "number", unit: "€" },
     ],
   },
 ];
