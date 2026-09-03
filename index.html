@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <meta name="theme-color" content="#EDE7D8" />
+  <title>Sopralluogo · schede immobili</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <header class="topbar" id="topbar">
+    <button class="back-btn" id="backBtn" hidden aria-label="Torna all'elenco">←</button>
+    <div class="topbar-title">
+      <h1 id="topbarTitle">Sopralluoghi</h1>
+      <p id="topbarSubtitle" class="topbar-subtitle"></p>
+    </div>
+    <button class="icon-btn" id="editBtn" hidden aria-label="Modifica dati generali" title="Modifica dati generali">✎</button>
+    <button class="icon-btn" id="deleteBtn" hidden aria-label="Elimina scheda" title="Elimina scheda">🗑</button>
+  </header>
+
+  <main id="app" class="app">
+    <p class="loading">Connessione a Firestore…</p>
+  </main>
+
+  <button class="fab" id="fabAdd" aria-label="Aggiungi immobile">+</button>
+
+  <!-- Sostituisci con la config del tuo progetto Firebase, vedi README.md -->
+  <script src="firebase-config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
