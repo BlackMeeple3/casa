@@ -9,11 +9,14 @@ import {
   getFirestore, collection, doc, addDoc, updateDoc, deleteDoc,
   onSnapshot, query, orderBy, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 const firebaseApp = initializeApp(window.FIREBASE_CONFIG);
 const db = getFirestore(firebaseApp);
 const auth = getAuth(firebaseApp);
+const googleProvider = new GoogleAuthProvider();
 const immobiliRef = collection(db, "immobili");
 
 // ------------------------------------------------------------
@@ -224,7 +227,9 @@ function renderList() {
       <div class="empty-state">
         <strong>Nessuna scheda ancora</strong>
         Tocca “+” per aggiungere il primo immobile da visitare.
-      </div>`;
+      </div>
+      ${signOutLinkHtml()}`;
+    document.getElementById("signOutBtn").addEventListener("click", () => signOut(auth));
     return;
   }
 
@@ -243,7 +248,17 @@ function renderList() {
       </li>`;
   }).join("");
 
-  appEl.innerHTML = `<ul class="property-list">${items}</ul>`;
+  appEl.innerHTML = `<ul class="property-list">${items}</ul>${signOutLinkHtml()}`;
+  document.getElementById("signOutBtn").addEventListener("click", () => signOut(auth));
+}
+
+function signOutLinkHtml() {
+  return `
+    <p style="text-align:center; margin-top:22px;">
+      <button id="signOutBtn" style="background:none; border:none; color:var(--ink-soft); font-size:0.82rem; text-decoration:underline; cursor:pointer;">
+        Esci da ${escapeHtml(auth.currentUser?.email || "Google")}
+      </button>
+    </p>`;
 }
 
 // ------------------------------------------------------------
@@ -715,12 +730,44 @@ deleteBtn.addEventListener("click", async () => {
 });
 
 // ------------------------------------------------------------
-// Avvio: accesso anonimo (richiesto dalla regola Firestore
-// consigliata nel README), poi sottoscrizione ai dati.
+// Avvio: schermata di accesso con Google. L'app vera e propria
+// parte solo dopo il login, così le regole Firestore possono
+// restringere lettura/scrittura al tuo solo uid.
 // ------------------------------------------------------------
-signInAnonymously(auth)
-  .then(subscribe)
-  .catch((err) => {
-    console.error(err);
-    appEl.innerHTML = `<p class="loading">Impossibile autenticarsi con Firebase.<br>Controlla la configurazione in firebase-config.js e che l'accesso anonimo sia abilitato nella console Firebase.</p>`;
+let started = false;
+
+function renderLoginGate() {
+  topbarTitle.textContent = "Sopralluoghi";
+  topbarSubtitle.textContent = "";
+  backBtn.hidden = true;
+  editBtn.hidden = true;
+  deleteBtn.hidden = true;
+  fab.hidden = true;
+  appEl.innerHTML = `
+    <div class="empty-state">
+      <strong>Accesso richiesto</strong>
+      Le schede sono private: accedi con il tuo account Google per continuare.
+      <div style="margin-top:18px;">
+        <button class="btn primary" id="googleLoginBtn" style="display:inline-flex; width:auto; padding:12px 22px;">Accedi con Google</button>
+      </div>
+    </div>`;
+  document.getElementById("googleLoginBtn").addEventListener("click", () => {
+    signInWithPopup(auth, googleProvider).catch((err) => {
+      console.error(err);
+      if (err.code === "auth/unauthorized-domain") {
+        showToast("Dominio non autorizzato: aggiungilo in Firebase → Authentication → Impostazioni");
+      } else {
+        showToast("Accesso non riuscito");
+      }
+    });
   });
+}
+
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    if (!started) { started = true; subscribe(); }
+  } else {
+    started = false;
+    renderLoginGate();
+  }
+});
