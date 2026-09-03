@@ -20,6 +20,66 @@ const googleProvider = new GoogleAuthProvider();
 const immobiliRef = collection(db, "immobili");
 
 // ------------------------------------------------------------
+// Checklist arredi/elettrodomestici di default: compare uguale
+// per ogni immobile. Per ognuno segni se è già presente in casa;
+// se non lo è, puoi annotare il costo stimato per aggiungerlo.
+// ------------------------------------------------------------
+const ARREDI_GROUPS = [
+  { label: "Cucina", fields: [
+    { key: "cucinaComponibile", label: "Cucina componibile (base + pensili)" },
+    { key: "pianoCottura", label: "Piano cottura" },
+    { key: "forno", label: "Forno" },
+    { key: "cappa", label: "Cappa aspirante" },
+    { key: "frigorifero", label: "Frigorifero" },
+    { key: "lavastoviglie", label: "Lavastoviglie" },
+    { key: "lavelloRubinetteria", label: "Lavello e rubinetteria" },
+    { key: "tavoloCucina", label: "Tavolo da pranzo" },
+    { key: "sedieCucina", label: "Sedie" },
+  ]},
+  { label: "Soggiorno", fields: [
+    { key: "divano", label: "Divano" },
+    { key: "tavolino", label: "Tavolino" },
+    { key: "mobileTv", label: "Mobile porta TV" },
+    { key: "tv", label: "Televisore" },
+    { key: "libreria", label: "Libreria/mensole" },
+    { key: "tendeSoggiorno", label: "Tende" },
+    { key: "tappeto", label: "Tappeto" },
+    { key: "lampadaTerra", label: "Lampada da terra" },
+  ]},
+  { label: "Camera da letto", fields: [
+    { key: "letto", label: "Letto matrimoniale + rete" },
+    { key: "materasso", label: "Materasso" },
+    { key: "armadio", label: "Armadio" },
+    { key: "comodini", label: "Comodini" },
+    { key: "cassettiera", label: "Cassettiera" },
+    { key: "lampadeComodino", label: "Lampade da comodino" },
+    { key: "tendeCamera", label: "Tende" },
+  ]},
+  { label: "Bagno", fields: [
+    { key: "mobileBagno", label: "Mobile bagno con lavabo" },
+    { key: "specchio", label: "Specchio" },
+    { key: "lavatrice", label: "Lavatrice" },
+    { key: "accessoriBagno", label: "Accessori bagno" },
+    { key: "cestoBiancheria", label: "Cesto biancheria" },
+  ]},
+  { label: "Ripostiglio / cantina / soffitta", fields: [
+    { key: "scaffalature", label: "Scaffalature" },
+    { key: "contenitori", label: "Contenitori/scatole organizzazione" },
+  ]},
+  { label: "Cortile / portico", fields: [
+    { key: "tavoloEsterno", label: "Tavolo e sedie da esterno" },
+    { key: "vasiPiante", label: "Vasi e piante" },
+    { key: "illuminazioneEsterna", label: "Illuminazione esterna" },
+  ]},
+  { label: "Varie / elettrodomestici extra", fields: [
+    { key: "climatizzatore", label: "Climatizzatore" },
+    { key: "kitPulizie", label: "Kit pulizie iniziale" },
+    { key: "ferroStiro", label: "Ferro da stiro e asse" },
+    { key: "aspirapolvere", label: "Aspirapolvere" },
+  ]},
+];
+
+// ------------------------------------------------------------
 // Schema: ogni sezione ha una chiave (= nome del campo mappa
 // su Firestore), un'etichetta di fase e i campi che contiene.
 // Aggiungere una voce qui la fa comparire automaticamente
@@ -125,6 +185,25 @@ const BOOL_YES = "si";
 const BOOL_NO = "no";
 
 // ------------------------------------------------------------
+// Helper generici per leggere/scrivere in un oggetto annidato
+// tramite un percorso puntato, a qualunque profondità
+// (es. "arredi.frigorifero.costo").
+// ------------------------------------------------------------
+function getPath(obj, path) {
+  return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
+function setPath(obj, path, value) {
+  const keys = path.split(".");
+  let cur = obj;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (typeof cur[keys[i]] !== "object" || cur[keys[i]] === null) cur[keys[i]] = {};
+    cur = cur[keys[i]];
+  }
+  cur[keys[keys.length - 1]] = value;
+}
+
+// ------------------------------------------------------------
 // Stato locale
 // ------------------------------------------------------------
 const state = {
@@ -167,7 +246,10 @@ function emptyImmobile(base) {
     out[section.key] = {};
     for (const f of section.fields) out[section.key][f.key] = null;
   }
-  out.arredi = [];
+  out.arredi = {};
+  for (const group of ARREDI_GROUPS) {
+    for (const f of group.fields) out.arredi[f.key] = { presente: null, costo: null };
+  }
   out.valutazione = { stelle: 0, andreiAvanti: null, noteFinali: "" };
   return out;
 }
@@ -205,6 +287,15 @@ function countProgress(data) {
       total++;
       const v = data[section.key] ? data[section.key][f.key] : null;
       if (v !== null && v !== undefined && v !== "") filled++;
+    }
+  }
+  // arredi: conta come "compilata" ogni voce a cui è stato risposto sì/no
+  const arredi = data.arredi || {};
+  for (const group of ARREDI_GROUPS) {
+    for (const f of group.fields) {
+      total++;
+      const v = arredi[f.key];
+      if (v && (v.presente === true || v.presente === false)) filled++;
     }
   }
   // valutazione finale conta come un unico blocco extra
@@ -313,15 +404,18 @@ function renderDetail() {
   const { filled, total } = countProgress(d);
   const pct = total ? Math.round((filled / total) * 100) : 0;
 
-  const sectionsHtml = SECTIONS.map((section) => renderSection(section, d)).join("");
+  const idxAfterSopralluogo = SECTIONS.findIndex((s) => s.key === "sopralluogo");
+  const sectionsBefore = SECTIONS.slice(0, idxAfterSopralluogo + 1).map((s) => renderSection(s, d)).join("");
+  const sectionsAfter = SECTIONS.slice(idxAfterSopralluogo + 1).map((s) => renderSection(s, d)).join("");
   const arrediHtml = renderArrediSection(d);
   const valutazioneHtml = renderValutazioneSection(d);
 
   appEl.innerHTML = `
     <div class="progress-summary"><span>Compilato</span><span>${filled}/${total} · ${pct}%</span></div>
     <div class="progress-bar"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
-    ${sectionsHtml}
+    ${sectionsBefore}
     ${arrediHtml}
+    ${sectionsAfter}
     ${valutazioneHtml}
   `;
 }
@@ -392,31 +486,51 @@ function renderField(sectionKey, f, value) {
 
 function renderArrediSection(d) {
   const open = state.openSections.has("arredi");
-  const arredi = d.arredi || [];
-  const rows = arredi.map((a, i) => `
-    <div class="arredo-row" data-arredo-index="${i}">
-      <input class="text-input" type="text" placeholder="Es. cucina, tende…" data-arredo-field="nome" value="${escapeHtml(a.nome || "")}" />
-      <div class="bool-toggle">
-        <button class="bool-btn yes ${a.incluso === true ? "active" : ""}" data-arredo-bool="true">Sì</button>
-        <button class="bool-btn no ${a.incluso === false ? "active" : ""}" data-arredo-bool="false">No</button>
-      </div>
-      <input class="num-input" type="number" inputmode="decimal" placeholder="€" data-arredo-field="valore" value="${a.valore ?? ""}" />
-      <button class="arredo-remove" data-arredo-remove="${i}" aria-label="Rimuovi">✕</button>
-    </div>
-  `).join("");
+  const arredi = d.arredi || {};
+  let filled = 0, total = 0, costoDaAggiungere = 0;
+
+  const groupsHtml = ARREDI_GROUPS.map((group) => {
+    const rows = group.fields.map((f) => {
+      const v = arredi[f.key] || {};
+      total++;
+      if (v.presente === true || v.presente === false) filled++;
+      if (v.presente === false && typeof v.costo === "number") costoDaAggiungere += v.costo;
+
+      const path = `arredi.${f.key}`;
+      const costoRow = v.presente === false ? `
+        <div class="num-field" style="margin-top:8px;">
+          <input class="num-input" type="number" inputmode="decimal" data-num-set="${path}.costo" value="${v.costo ?? ""}" placeholder="0" />
+          <span class="num-unit">€</span>
+        </div>` : "";
+
+      return `
+        <div class="field-row stacked" data-field="${path}">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+            <span class="field-label">${f.label}</span>
+            <div class="bool-toggle">
+              <button class="bool-btn yes ${v.presente === true ? "active" : ""}" data-bool-set="${path}.presente" data-bool-val="true">Sì</button>
+              <button class="bool-btn no ${v.presente === false ? "active" : ""}" data-bool-set="${path}.presente" data-bool-val="false">No</button>
+            </div>
+          </div>
+          ${costoRow}
+        </div>`;
+    }).join("");
+    return `<p class="group-label">${escapeHtml(group.label)}</p>${rows}`;
+  }).join("");
+
+  const countLabel = costoDaAggiungere > 0
+    ? `${filled}/${total} · +${costoDaAggiungere.toLocaleString("it-IT")} €`
+    : `${filled}/${total}`;
 
   return `
     <div class="section ${open ? "open" : ""}" data-section="arredi">
       <button class="section-header" data-toggle-section="arredi">
-        <span class="section-tag">Trattativa</span>
-        <h3>Arredi/elettrodomestici inclusi</h3>
-        <span class="section-count">${arredi.length}</span>
+        <span class="section-tag">Arredi</span>
+        <h3>Dotazione arredi ed elettrodomestici</h3>
+        <span class="section-count">${countLabel}</span>
         <span class="section-chevron">⌄</span>
       </button>
-      <div class="section-body">
-        ${rows}
-        <button class="add-row-btn" data-add-arredo>+ aggiungi voce</button>
-      </div>
+      <div class="section-body">${groupsHtml}</div>
     </div>`;
 }
 
@@ -482,6 +596,22 @@ function refreshCountersOnly() {
     const el = appEl.querySelector(`.section[data-section="${section.key}"] .section-count`);
     if (el) el.textContent = `${count}/${section.fields.length}`;
   }
+
+  // badge della sezione arredi: conteggio + costo da aggiungere
+  {
+    const arredi = d.arredi || {};
+    let aFilled = 0, aTotal = 0, costo = 0;
+    for (const group of ARREDI_GROUPS) {
+      for (const f of group.fields) {
+        aTotal++;
+        const v = arredi[f.key];
+        if (v && (v.presente === true || v.presente === false)) aFilled++;
+        if (v && v.presente === false && typeof v.costo === "number") costo += v.costo;
+      }
+    }
+    const el = appEl.querySelector('.section[data-section="arredi"] .section-count');
+    if (el) el.textContent = costo > 0 ? `${aFilled}/${aTotal} · +${costo.toLocaleString("it-IT")} €` : `${aFilled}/${aTotal}`;
+  }
 }
 
 // ------------------------------------------------------------
@@ -520,9 +650,7 @@ function showToast(msg) {
 function setLocalValue(id, path, value) {
   const d = state.immobili.get(id);
   if (!d) return;
-  const [sectionKey, fieldKey] = path.split(".");
-  if (!d[sectionKey]) d[sectionKey] = {};
-  d[sectionKey][fieldKey] = value;
+  setPath(d, path, value);
 }
 
 function writeField(path, value, { debounceMs = 0 } = {}) {
@@ -539,14 +667,6 @@ function writeField(path, value, { debounceMs = 0 } = {}) {
   } else {
     patchImmobile(id, { [path]: value }).then(() => showToast("Salvato"));
   }
-}
-
-async function writeArredi(id, newArredi) {
-  const d = state.immobili.get(id);
-  if (d) d.arredi = newArredi;
-  if (id === state.currentId) refreshCountersOnly();
-  await patchImmobile(id, { arredi: newArredi });
-  showToast("Salvato");
 }
 
 // ------------------------------------------------------------
@@ -599,47 +719,12 @@ appEl.addEventListener("click", (e) => {
     renderDetail();
     return;
   }
-
-  const addArredo = e.target.closest("[data-add-arredo]");
-  if (addArredo) {
-    const id = state.currentId;
-    const d = state.immobili.get(id);
-    const next = [...(d.arredi || []), { nome: "", incluso: null, valore: null }];
-    writeArredi(id, next);
-    renderDetail();
-    return;
-  }
-
-  const removeArredo = e.target.closest("[data-arredo-remove]");
-  if (removeArredo) {
-    const idx = Number(removeArredo.dataset.arredoRemove);
-    const id = state.currentId;
-    const d = state.immobili.get(id);
-    const next = (d.arredi || []).filter((_, i) => i !== idx);
-    writeArredi(id, next);
-    renderDetail();
-    return;
-  }
-
-  const arredoBool = e.target.closest("[data-arredo-bool]");
-  if (arredoBool) {
-    const row = arredoBool.closest("[data-arredo-index]");
-    const idx = Number(row.dataset.arredoIndex);
-    const val = arredoBool.dataset.arredoBool === "true";
-    const id = state.currentId;
-    const d = state.immobili.get(id);
-    const next = [...d.arredi];
-    next[idx] = { ...next[idx], incluso: next[idx].incluso === val ? null : val };
-    writeArredi(id, next);
-    renderDetail();
-    return;
-  }
 });
 
 function getLocalValue(path) {
   const d = state.immobili.get(state.currentId);
-  const [sectionKey, fieldKey] = path.split(".");
-  return d && d[sectionKey] ? d[sectionKey][fieldKey] : null;
+  if (!d) return null;
+  return getPath(d, path);
 }
 
 appEl.addEventListener("input", (e) => {
@@ -656,23 +741,6 @@ appEl.addEventListener("input", (e) => {
   if (textEl) {
     const path = textEl.dataset.textSet;
     writeField(path, textEl.value, { debounceMs: 600 });
-    return;
-  }
-
-  const arredoField = e.target.closest("[data-arredo-field]");
-  if (arredoField) {
-    const row = arredoField.closest("[data-arredo-index]");
-    const idx = Number(row.dataset.arredoIndex);
-    const field = arredoField.dataset.arredoField;
-    const raw = arredoField.value;
-    const id = state.currentId;
-    const d = state.immobili.get(id);
-    const next = [...d.arredi];
-    next[idx] = { ...next[idx], [field]: field === "valore" ? (raw === "" ? null : Number(raw)) : raw };
-    d.arredi = next;
-    const key = id + "::arredi";
-    clearTimeout(debounceTimers.get(key));
-    debounceTimers.set(key, setTimeout(() => writeArredi(id, next), 500));
     return;
   }
 });
