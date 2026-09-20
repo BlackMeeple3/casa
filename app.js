@@ -7,7 +7,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getFirestore, collection, doc, addDoc, updateDoc, deleteDoc,
-  onSnapshot, query, orderBy, serverTimestamp
+  onSnapshot, query, orderBy, serverTimestamp, setDoc
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
@@ -18,6 +18,41 @@ const db = getFirestore(firebaseApp);
 const auth = getAuth(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
 const immobiliRef = collection(db, "immobili");
+// Documento unico e condiviso, indipendente da qualunque immobile: le
+// offerte di mutuo che stai confrontando restano le stesse qualunque
+// casa tu stia visitando in questo momento.
+const mutuoRef = doc(db, "mutuo", "comparazione");
+
+// ------------------------------------------------------------
+// Confronto offerte di mutuo: elenco libero (una scheda per ogni
+// banca/preventivo), a differenza degli arredi qui il numero di
+// voci è variabile perché non sai in anticipo quante banche
+// confronterai.
+// ------------------------------------------------------------
+const OFFERTA_FIELDS = [
+  { key: "banca", label: "Banca", type: "text" },
+  { key: "stato", label: "Stato della richiesta", type: "chip", options: ["Da richiedere", "Inviata", "Pre-delibera OK", "Rifiutata", "Scaduta", "Scelta"] },
+  { key: "importoMutuo", label: "Importo mutuo", type: "number", unit: "€" },
+  { key: "ltv", label: "LTV", type: "number", unit: "%" },
+  { key: "durataAnni", label: "Durata", type: "number", unit: "anni" },
+  { key: "tan", label: "TAN", type: "number", unit: "%" },
+  { key: "taeg", label: "TAEG", type: "number", unit: "%" },
+  { key: "rataMensile", label: "Rata mensile", type: "number", unit: "€" },
+  { key: "istruttoria", label: "Istruttoria", type: "number", unit: "€" },
+  { key: "perizia", label: "Perizia", type: "number", unit: "€" },
+  { key: "impostaSostitutiva", label: "Imposta sostitutiva", type: "number", unit: "€" },
+  { key: "assicurazioneVitaObbligatoria", label: "Assicurazione vita obbligatoria", type: "bool" },
+  { key: "costoAssicurazioneVita", label: "Costo assicurazione vita (annuo)", type: "number", unit: "€" },
+  { key: "costoAssicurazioneIncendio", label: "Costo assicurazione incendio (annuo)", type: "number", unit: "€" },
+  { key: "scontiApplicati", label: "Sconti applicati (Giovani, Green, Consap...)", type: "text" },
+  { key: "note", label: "Note", type: "text" },
+];
+
+function nuovaOfferta() {
+  const o = {};
+  for (const f of OFFERTA_FIELDS) o[f.key] = f.type === "bool" ? null : (f.type === "number" ? null : "");
+  return o;
+}
 
 // ------------------------------------------------------------
 // Checklist arredi/elettrodomestici di default: compare uguale
@@ -207,12 +242,15 @@ function setPath(obj, path, value) {
 // Stato locale
 // ------------------------------------------------------------
 const state = {
-  view: "list",           // "list" | "detail"
+  view: "list",           // "list" | "detail" | "mutuo"
   immobili: new Map(),    // id -> dati documento
   order: [],              // id in ordine di creazione (più recenti prima)
   currentId: null,
   openSections: new Set([SECTIONS[0].key]),
+  openOfferte: new Set(), // indici delle schede offerta espanse
   loaded: false,
+  mutuoOfferte: [],       // condivise tra tutti gli immobili
+  mutuoLoaded: false,
 };
 
 const debounceTimers = new Map();
@@ -237,6 +275,17 @@ function subscribe() {
   }, (err) => {
     console.error(err);
     showToast("Errore di connessione a Firestore");
+  });
+}
+
+function subscribeMutuo() {
+  onSnapshot(mutuoRef, (snap) => {
+    state.mutuoLoaded = true;
+    state.mutuoOfferte = snap.exists() ? (snap.data().offerte || []) : [];
+    if (state.view === "mutuo") renderMutuoSafe();
+  }, (err) => {
+    console.error(err);
+    showToast("Errore di connessione al confronto mutuo");
   });
 }
 
@@ -340,6 +389,7 @@ function renderList() {
 
   if (state.order.length === 0) {
     appEl.innerHTML = `
+      ${mutuoLinkCardHtml()}
       <div class="empty-state">
         <strong>Nessuna scheda ancora</strong>
         Tocca “+” per aggiungere il primo immobile da visitare.
@@ -364,7 +414,7 @@ function renderList() {
       </li>`;
   }).join("");
 
-  appEl.innerHTML = `<ul class="property-list">${items}</ul>${signOutLinkHtml()}`;
+  appEl.innerHTML = `${mutuoLinkCardHtml()}<ul class="property-list">${items}</ul>${signOutLinkHtml()}`;
   document.getElementById("signOutBtn").addEventListener("click", () => signOut(auth));
 }
 
@@ -405,8 +455,10 @@ function renderDetail() {
   const pct = total ? Math.round((filled / total) * 100) : 0;
 
   const idxAfterSopralluogo = SECTIONS.findIndex((s) => s.key === "sopralluogo");
+  const idxFinanziamento = SECTIONS.findIndex((s) => s.key === "finanziamento");
   const sectionsBefore = SECTIONS.slice(0, idxAfterSopralluogo + 1).map((s) => renderSection(s, d)).join("");
-  const sectionsAfter = SECTIONS.slice(idxAfterSopralluogo + 1).map((s) => renderSection(s, d)).join("");
+  const sectionsMiddle = SECTIONS.slice(idxAfterSopralluogo + 1, idxFinanziamento).map((s) => renderSection(s, d)).join("");
+  const sectionsAfter = SECTIONS.slice(idxFinanziamento).map((s) => renderSection(s, d)).join("");
   const arrediHtml = renderArrediSection(d);
   const valutazioneHtml = renderValutazioneSection(d);
 
@@ -415,9 +467,23 @@ function renderDetail() {
     <div class="progress-bar"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
     ${sectionsBefore}
     ${arrediHtml}
+    ${sectionsMiddle}
+    ${mutuoLinkCardHtml()}
     ${sectionsAfter}
     ${valutazioneHtml}
   `;
+}
+
+function mutuoLinkCardHtml() {
+  const n = state.mutuoOfferte.length;
+  return `
+    <button class="offerta-card mutuo-link" data-goto-mutuo>
+      <div class="offerta-header" style="cursor:pointer;">
+        <h4>💰 Confronto offerte di mutuo</h4>
+        <span class="offerta-best-badge" style="background:none;">${n ? n + " salvate" : "vai →"}</span>
+      </div>
+      <p class="field-hint" style="padding:0 14px 12px;">Condiviso tra tutte le case che visiti, non solo questa.</p>
+    </button>`;
 }
 
 function renderSection(section, d) {
@@ -534,6 +600,103 @@ function renderArrediSection(d) {
     </div>`;
 }
 
+function renderMutuoSafe() {
+  const active = document.activeElement;
+  if (active && appEl.contains(active) && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
+    return;
+  }
+  renderMutuoView();
+}
+
+function goMutuo() {
+  state.view = "mutuo";
+  state.openOfferte = new Set();
+  renderMutuoView();
+}
+
+function renderMutuoView() {
+  topbarTitle.textContent = "Confronto mutuo";
+  topbarSubtitle.textContent = "Condiviso tra tutte le case";
+  backBtn.hidden = false;
+  editBtn.hidden = true;
+  deleteBtn.hidden = true;
+  fab.hidden = true;
+
+  if (!state.mutuoLoaded) {
+    appEl.innerHTML = `<p class="loading">Connessione a Firestore…</p>`;
+    return;
+  }
+
+  const offerte = state.mutuoOfferte || [];
+  const tanValidi = offerte.map((o) => o.tan).filter((v) => typeof v === "number");
+  const migliorTan = tanValidi.length ? Math.min(...tanValidi) : null;
+
+  const cardsHtml = offerte.map((o, i) => {
+    const cardOpen = state.openOfferte.has(i);
+    const titolo = o.banca ? escapeHtml(o.banca) : `Offerta ${i + 1}`;
+    const badgeTan = typeof o.tan === "number" ? ` · TAN ${o.tan}%` : "";
+    const isBest = migliorTan !== null && o.tan === migliorTan;
+
+    const fieldsHtml = OFFERTA_FIELDS.map((f) => {
+      const path = `${i}|${f.key}`;
+      const value = o[f.key];
+      if (f.type === "bool") {
+        return `
+          <div class="field-row" data-field="${path}">
+            <span class="field-label">${f.label}</span>
+            <div class="bool-toggle">
+              <button class="bool-btn yes ${value === true ? "active" : ""}" data-offerta-bool="${path}" data-bool-val="true">Sì</button>
+              <button class="bool-btn no ${value === false ? "active" : ""}" data-offerta-bool="${path}" data-bool-val="false">No</button>
+            </div>
+          </div>`;
+      }
+      if (f.type === "chip") {
+        const chips = f.options.map((opt) => `
+          <button class="chip ${value === opt ? "active" : ""}" data-offerta-chip="${path}" data-chip-val="${escapeHtml(opt)}">${opt}</button>
+        `).join("");
+        return `
+          <div class="field-row stacked" data-field="${path}">
+            <span class="field-label">${f.label}</span>
+            <div class="chip-group">${chips}</div>
+          </div>`;
+      }
+      if (f.type === "number") {
+        return `
+          <div class="field-row stacked" data-field="${path}">
+            <span class="field-label">${f.label}</span>
+            <div class="num-field">
+              <input class="num-input" type="number" inputmode="decimal" data-offerta-field="${path}" value="${value ?? ""}" placeholder="0" />
+              <span class="num-unit">${f.unit || ""}</span>
+            </div>
+          </div>`;
+      }
+      return `
+        <div class="field-row stacked" data-field="${path}">
+          <span class="field-label">${f.label}</span>
+          <input class="text-input" type="text" data-offerta-field="${path}" value="${escapeHtml(value || "")}" />
+        </div>`;
+    }).join("");
+
+    return `
+      <div class="offerta-card ${isBest ? "best" : ""}">
+        <button class="offerta-header" data-toggle-offerta="${i}">
+          ${isBest ? '<span class="offerta-best-badge">★ miglior TAN</span>' : ""}
+          <h4>${titolo}${badgeTan}</h4>
+          <span class="section-chevron ${cardOpen ? "open" : ""}">⌄</span>
+        </button>
+        ${cardOpen ? `<div class="offerta-body">${fieldsHtml}
+          <button class="add-row-btn danger" data-remove-offerta="${i}">✕ rimuovi questa offerta</button>
+        </div>` : ""}
+      </div>`;
+  }).join("");
+
+  appEl.innerHTML = `
+    <p class="field-hint" style="margin-bottom:14px;">Queste offerte sono le stesse qualunque immobile tu stia guardando: confronta le banche una volta sola.</p>
+    ${cardsHtml}
+    <button class="add-row-btn" data-add-offerta>+ aggiungi offerta/banca</button>
+  `;
+}
+
 function renderValutazioneSection(d) {
   const open = state.openSections.has("valutazione");
   const v = d.valutazione || { stelle: 0, andreiAvanti: null, noteFinali: "" };
@@ -627,6 +790,7 @@ function openImmobile(id) {
   state.view = "detail";
   state.currentId = id;
   state.openSections = new Set([SECTIONS[0].key]);
+  state.openOfferte = new Set();
   renderDetail();
 }
 
@@ -666,6 +830,17 @@ function writeField(path, value, { debounceMs = 0 } = {}) {
     }, debounceMs));
   } else {
     patchImmobile(id, { [path]: value }).then(() => showToast("Salvato"));
+  }
+}
+
+async function writeMutuoOfferte(newOfferte) {
+  state.mutuoOfferte = newOfferte;
+  try {
+    await setDoc(mutuoRef, { offerte: newOfferte }, { merge: true });
+    showToast("Salvato");
+  } catch (err) {
+    console.error(err);
+    showToast("Salvataggio non riuscito");
   }
 }
 
@@ -719,6 +894,63 @@ appEl.addEventListener("click", (e) => {
     renderDetail();
     return;
   }
+
+  const toggleOfferta = e.target.closest("[data-toggle-offerta]");
+  if (toggleOfferta) {
+    const idx = Number(toggleOfferta.dataset.toggleOfferta);
+    if (state.openOfferte.has(idx)) state.openOfferte.delete(idx);
+    else state.openOfferte.add(idx);
+    renderMutuoView();
+    return;
+  }
+
+  const gotoMutuo = e.target.closest("[data-goto-mutuo]");
+  if (gotoMutuo) { goMutuo(); return; }
+
+  const addOfferta = e.target.closest("[data-add-offerta]");
+  if (addOfferta) {
+    const next = [...state.mutuoOfferte, nuovaOfferta()];
+    state.openOfferte.add(next.length - 1);
+    writeMutuoOfferte(next);
+    renderMutuoView();
+    return;
+  }
+
+  const removeOfferta = e.target.closest("[data-remove-offerta]");
+  if (removeOfferta) {
+    const idx = Number(removeOfferta.dataset.removeOfferta);
+    const next = state.mutuoOfferte.filter((_, i) => i !== idx);
+    state.openOfferte = new Set();
+    writeMutuoOfferte(next);
+    renderMutuoView();
+    return;
+  }
+
+  const offertaBool = e.target.closest("[data-offerta-bool]");
+  if (offertaBool) {
+    const [idxStr, key] = offertaBool.dataset.offertaBool.split("|");
+    const idx = Number(idxStr);
+    const val = offertaBool.dataset.boolVal === "true";
+    const next = [...state.mutuoOfferte];
+    const current = next[idx][key];
+    next[idx] = { ...next[idx], [key]: current === val ? null : val };
+    writeMutuoOfferte(next);
+    renderMutuoView();
+    return;
+  }
+
+  const offertaChip = e.target.closest("[data-offerta-chip]");
+  if (offertaChip) {
+    const [idxStr, key] = offertaChip.dataset.offertaChip.split("|");
+    const idx = Number(idxStr);
+    const val = offertaChip.dataset.chipVal;
+    const next = [...state.mutuoOfferte];
+    const current = next[idx][key];
+    next[idx] = { ...next[idx], [key]: current === val ? "" : val };
+    writeMutuoOfferte(next);
+    renderMutuoView();
+    return;
+  }
 });
 
 function getLocalValue(path) {
@@ -741,6 +973,26 @@ appEl.addEventListener("input", (e) => {
   if (textEl) {
     const path = textEl.dataset.textSet;
     writeField(path, textEl.value, { debounceMs: 600 });
+    return;
+  }
+
+  const offertaField = e.target.closest("[data-offerta-field]");
+  if (offertaField) {
+    const [idxStr, key] = offertaField.dataset.offertaField.split("|");
+    const idx = Number(idxStr);
+    const fieldDef = OFFERTA_FIELDS.find((f) => f.key === key);
+    const raw = offertaField.value;
+    const val = fieldDef && fieldDef.type === "number" ? (raw === "" ? null : Number(raw)) : raw;
+
+    const next = [...state.mutuoOfferte];
+    next[idx] = { ...next[idx], [key]: val };
+    state.mutuoOfferte = next;
+
+    // un solo debounce condiviso per tutto l'array: evita che due campi
+    // modificati quasi insieme si sovrascrivano a vicenda alla scrittura
+    const debKey = "mutuoOfferte";
+    clearTimeout(debounceTimers.get(debKey));
+    debounceTimers.set(debKey, setTimeout(() => writeMutuoOfferte(next), 500));
     return;
   }
 });
@@ -858,7 +1110,7 @@ function renderLoginGate() {
 
 onAuthStateChanged(auth, (user) => {
   if (user) {
-    if (!started) { started = true; subscribe(); }
+    if (!started) { started = true; subscribe(); subscribeMutuo(); }
   } else {
     started = false;
     renderLoginGate();
