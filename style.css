@@ -557,8 +557,9 @@ textarea {
   z-index: 2;
 }
 
-.confronto-table thead th.col-scelta {
+.confronto-table th.row-label.row-scelta {
   background: var(--accent);
+  color: #fff;
 }
 
 .confronto-table thead th.corner {
@@ -703,6 +704,48 @@ textarea {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+/* ---------- popup di scelta parametri da confrontare ---------- */
+.colonna-pick-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.colonna-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.colonna-pick.selected {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+
+.colonna-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  flex-shrink: 0;
 }
 
 @media (max-width: 380px) {
