@@ -30,22 +30,22 @@ const mutuoRef = doc(db, "mutuo", "comparazione");
 // confronterai.
 // ------------------------------------------------------------
 const OFFERTA_FIELDS = [
-  { key: "banca", label: "Banca", type: "text" },
-  { key: "stato", label: "Stato della richiesta", type: "chip", options: ["Da richiedere", "Inviata", "Pre-delibera OK", "Rifiutata", "Scaduta", "Scelta"] },
-  { key: "importoMutuo", label: "Importo mutuo", type: "number", unit: "€" },
-  { key: "ltv", label: "LTV", type: "number", unit: "%" },
-  { key: "durataAnni", label: "Durata", type: "number", unit: "anni" },
-  { key: "tan", label: "TAN", type: "number", unit: "%" },
-  { key: "taeg", label: "TAEG", type: "number", unit: "%" },
-  { key: "rataMensile", label: "Rata mensile", type: "number", unit: "€" },
-  { key: "istruttoria", label: "Istruttoria", type: "number", unit: "€" },
-  { key: "perizia", label: "Perizia", type: "number", unit: "€" },
-  { key: "impostaSostitutiva", label: "Imposta sostitutiva", type: "number", unit: "€" },
-  { key: "assicurazioneVitaObbligatoria", label: "Assicurazione vita obbligatoria", type: "bool" },
-  { key: "costoAssicurazioneVita", label: "Costo assicurazione vita (annuo)", type: "number", unit: "€" },
-  { key: "costoAssicurazioneIncendio", label: "Costo assicurazione incendio (annuo)", type: "number", unit: "€" },
-  { key: "scontiApplicati", label: "Sconti applicati (Giovani, Green, Consap...)", type: "text" },
-  { key: "note", label: "Note", type: "text" },
+  { key: "banca", label: "Banca", type: "text", compare: "none" },
+  { key: "stato", label: "Stato della richiesta", type: "chip", options: ["Da richiedere", "Inviata", "Pre-delibera OK", "Rifiutata", "Scaduta", "Scelta"], compare: "none" },
+  { key: "importoMutuo", label: "Importo mutuo", type: "number", unit: "€", compare: "none" },
+  { key: "ltv", label: "LTV", type: "number", unit: "%", compare: "none" },
+  { key: "durataAnni", label: "Durata", type: "number", unit: "anni", compare: "none" },
+  { key: "tan", label: "TAN", type: "number", unit: "%", compare: "min" },
+  { key: "taeg", label: "TAEG", type: "number", unit: "%", compare: "min" },
+  { key: "rataMensile", label: "Rata mensile", type: "number", unit: "€", compare: "min" },
+  { key: "istruttoria", label: "Istruttoria", type: "number", unit: "€", compare: "min" },
+  { key: "perizia", label: "Perizia", type: "number", unit: "€", compare: "min" },
+  { key: "impostaSostitutiva", label: "Imposta sostitutiva", type: "number", unit: "€", compare: "min" },
+  { key: "assicurazioneVitaObbligatoria", label: "Assicurazione vita obbligatoria", type: "bool", compare: "preferFalse" },
+  { key: "costoAssicurazioneVita", label: "Costo assicurazione vita (annuo)", type: "number", unit: "€", compare: "min" },
+  { key: "costoAssicurazioneIncendio", label: "Costo assicurazione incendio (annuo)", type: "number", unit: "€", compare: "min" },
+  { key: "scontiApplicati", label: "Sconti applicati (Giovani, Green, Consap...)", type: "text", compare: "none" },
+  { key: "note", label: "Note", type: "text", compare: "none" },
 ];
 
 function nuovaOfferta() {
@@ -251,6 +251,7 @@ const state = {
   loaded: false,
   mutuoOfferte: [],       // condivise tra tutti gli immobili
   mutuoLoaded: false,
+  mutuoTableView: false, // false = schede, true = tabella di confronto
 };
 
 const debounceTimers = new Map();
@@ -692,9 +693,65 @@ function renderMutuoView() {
 
   appEl.innerHTML = `
     <p class="field-hint" style="margin-bottom:14px;">Queste offerte sono le stesse qualunque immobile tu stia guardando: confronta le banche una volta sola.</p>
-    ${cardsHtml}
-    <button class="add-row-btn" data-add-offerta>+ aggiungi offerta/banca</button>
+    ${confrontoToggleBtnHtml(offerte.length)}
+    ${state.mutuoTableView ? renderConfrontoTabella(offerte) : `${cardsHtml}<button class="add-row-btn" data-add-offerta>+ aggiungi offerta/banca</button>`}
   `;
+}
+
+function confrontoToggleBtnHtml(numOfferte) {
+  if (numOfferte < 2) return "";
+  return `
+    <button class="compare-cta" data-toggle-confronto>
+      ${state.mutuoTableView ? "← Torna alle schede" : "📊 Confronta tutte le offerte, parametro per parametro"}
+    </button>`;
+}
+
+function fmtOffertaValue(v, f) {
+  if (v === null || v === undefined || v === "") return "—";
+  if (f.type === "bool") return v ? "Sì" : "No";
+  if (f.type === "number") {
+    const n = Number(v).toLocaleString("it-IT");
+    if (f.unit === "€") return n + " €";
+    if (f.unit === "%") return n + "%";
+    if (f.unit) return n + " " + f.unit;
+    return n;
+  }
+  return escapeHtml(String(v));
+}
+
+function renderConfrontoTabella(offerte) {
+  const headerCells = offerte.map((o, i) => {
+    const scelta = o.stato === "Scelta";
+    return `<th class="${scelta ? "col-scelta" : ""}">${o.banca ? escapeHtml(o.banca) : `Offerta ${i + 1}`}${scelta ? " ✓" : ""}</th>`;
+  }).join("");
+
+  const rows = OFFERTA_FIELDS.filter((f) => f.key !== "banca").map((f) => {
+    const values = offerte.map((o) => o[f.key]);
+    let bestIdx = -1;
+    if (f.compare === "min") {
+      const nums = values.map((v) => (typeof v === "number" ? v : Infinity));
+      const min = Math.min(...nums);
+      if (isFinite(min)) bestIdx = nums.indexOf(min);
+    } else if (f.compare === "preferFalse") {
+      bestIdx = values.findIndex((v) => v === false);
+    }
+
+    const cells = values.map((v, i) => {
+      const display = fmtOffertaValue(v, f);
+      const isBest = i === bestIdx && display !== "—";
+      return `<td class="${isBest ? "cell-best" : ""}">${isBest ? "✓ " : ""}${display}</td>`;
+    }).join("");
+
+    return `<tr><th class="row-label">${f.label}</th>${cells}</tr>`;
+  }).join("");
+
+  return `
+    <div class="confronto-wrap">
+      <table class="confronto-table">
+        <thead><tr><th class="corner"></th>${headerCells}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 function renderValutazioneSection(d) {
@@ -906,6 +963,13 @@ appEl.addEventListener("click", (e) => {
 
   const gotoMutuo = e.target.closest("[data-goto-mutuo]");
   if (gotoMutuo) { goMutuo(); return; }
+
+  const toggleConfronto = e.target.closest("[data-toggle-confronto]");
+  if (toggleConfronto) {
+    state.mutuoTableView = !state.mutuoTableView;
+    renderMutuoView();
+    return;
+  }
 
   const addOfferta = e.target.closest("[data-add-offerta]");
   if (addOfferta) {
