@@ -252,6 +252,7 @@ const state = {
   mutuoOfferte: [],       // condivise tra tutti gli immobili
   mutuoLoaded: false,
   mutuoTableView: false, // false = schede, true = tabella di confronto
+  confrontoColonne: ["tan", "rataMensile", "taeg"], // max 3, in ordine — scelti dal popup
 };
 
 const debounceTimers = new Map();
@@ -720,38 +721,102 @@ function fmtOffertaValue(v, f) {
 }
 
 function renderConfrontoTabella(offerte) {
-  const headerCells = offerte.map((o, i) => {
-    const scelta = o.stato === "Scelta";
-    return `<th class="${scelta ? "col-scelta" : ""}">${o.banca ? escapeHtml(o.banca) : `Offerta ${i + 1}`}${scelta ? " ✓" : ""}</th>`;
-  }).join("");
+  const colFields = state.confrontoColonne
+    .map((key) => OFFERTA_FIELDS.find((f) => f.key === key))
+    .filter(Boolean);
 
-  const rows = OFFERTA_FIELDS.filter((f) => f.key !== "banca").map((f) => {
+  const pickBtnHtml = `
+    <button class="add-row-btn" data-open-colonne>⚙ Scegli parametri da confrontare (${colFields.length}/3)</button>`;
+
+  if (colFields.length === 0) {
+    return `
+      <p class="field-hint" style="margin-bottom:12px;">Nessun parametro scelto ancora.</p>
+      ${pickBtnHtml}`;
+  }
+
+  // per ogni colonna scelta, trovo l'indice della banca con il valore migliore
+  const bestPerCol = colFields.map((f) => {
     const values = offerte.map((o) => o[f.key]);
-    let bestIdx = -1;
     if (f.compare === "min") {
       const nums = values.map((v) => (typeof v === "number" ? v : Infinity));
       const min = Math.min(...nums);
-      if (isFinite(min)) bestIdx = nums.indexOf(min);
-    } else if (f.compare === "preferFalse") {
-      bestIdx = values.findIndex((v) => v === false);
+      return isFinite(min) ? nums.indexOf(min) : -1;
     }
+    if (f.compare === "preferFalse") return values.findIndex((v) => v === false);
+    return -1;
+  });
 
-    const cells = values.map((v, i) => {
-      const display = fmtOffertaValue(v, f);
-      const isBest = i === bestIdx && display !== "—";
+  const headerCells = colFields.map((f) => `<th>${f.label}</th>`).join("");
+
+  const bodyRows = offerte.map((o, i) => {
+    const scelta = o.stato === "Scelta";
+    const banca = o.banca ? escapeHtml(o.banca) : `Offerta ${i + 1}`;
+    const cells = colFields.map((f, ci) => {
+      const display = fmtOffertaValue(o[f.key], f);
+      const isBest = bestPerCol[ci] === i && display !== "—";
       return `<td class="${isBest ? "cell-best" : ""}">${isBest ? "✓ " : ""}${display}</td>`;
     }).join("");
-
-    return `<tr><th class="row-label">${f.label}</th>${cells}</tr>`;
+    return `<tr><th class="row-label ${scelta ? "row-scelta" : ""}">${banca}${scelta ? " ✓" : ""}</th>${cells}</tr>`;
   }).join("");
 
   return `
     <div class="confronto-wrap">
       <table class="confronto-table">
         <thead><tr><th class="corner"></th>${headerCells}</tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${bodyRows}</tbody>
       </table>
+    </div>
+    ${pickBtnHtml}`;
+}
+
+function openColonneModal() {
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+
+  const optionsHtml = OFFERTA_FIELDS.filter((f) => f.key !== "banca").map((f) => {
+    const idx = state.confrontoColonne.indexOf(f.key);
+    const selected = idx !== -1;
+    return `
+      <button class="colonna-pick ${selected ? "selected" : ""}" data-pick-colonna="${f.key}">
+        ${selected ? `<span class="colonna-order">${idx + 1}</span>` : ""}
+        <span>${f.label}</span>
+      </button>`;
+  }).join("");
+
+  backdrop.innerHTML = `
+    <div class="modal-sheet">
+      <h2>Scegli fino a 3 parametri</h2>
+      <p class="field-hint" style="margin-bottom:12px;">Tocca nell'ordine in cui li vuoi vedere in tabella. Tocca di nuovo per toglierne uno.</p>
+      <div class="colonna-pick-list">${optionsHtml}</div>
+      <div class="modal-actions">
+        <button class="btn primary" data-close-colonne>Fatto</button>
+      </div>
     </div>`;
+  document.body.appendChild(backdrop);
+
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop || e.target.closest("[data-close-colonne]")) {
+      backdrop.remove();
+      renderMutuoView();
+      return;
+    }
+    const pick = e.target.closest("[data-pick-colonna]");
+    if (pick) {
+      const key = pick.dataset.pickColonna;
+      const idx = state.confrontoColonne.indexOf(key);
+      if (idx !== -1) {
+        state.confrontoColonne.splice(idx, 1);
+      } else {
+        if (state.confrontoColonne.length >= 3) {
+          showToast("Massimo 3 parametri: togline uno prima");
+          return;
+        }
+        state.confrontoColonne.push(key);
+      }
+      backdrop.remove();
+      openColonneModal();
+    }
+  });
 }
 
 function renderValutazioneSection(d) {
@@ -970,6 +1035,9 @@ appEl.addEventListener("click", (e) => {
     renderMutuoView();
     return;
   }
+
+  const openColonne = e.target.closest("[data-open-colonne]");
+  if (openColonne) { openColonneModal(); return; }
 
   const addOfferta = e.target.closest("[data-add-offerta]");
   if (addOfferta) {
